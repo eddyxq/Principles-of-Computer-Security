@@ -117,7 +117,7 @@ void solveNextBlock(unsigned char ctbuf[], size_t ctlen, int ifd[2], int ofd[2],
 {
 	int blockNumber = numBlocks - (i / 16);
 	
-	int start = 16 * blockNumber;
+	int start = (16 * blockNumber) -1;
 	
 	for(int j = 0; j < 16; j++)
 	{
