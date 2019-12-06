@@ -14,6 +14,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctime>
+#include <ratio>
+#include <chrono>
 
 unsigned char query_oracle(unsigned char ctbuf[], size_t ctlen, int ifd[2], int ofd[2])
 {
@@ -38,11 +41,20 @@ unsigned char query_oracle(unsigned char ctbuf[], size_t ctlen, int ifd[2], int 
     }
     else
     {
+		//start the clock
+		auto startTime = std::chrono::high_resolution_clock::now();
         ssize_t bytes_written = write(ofd[1], &ctlen, sizeof(ctlen));
         bytes_written = write(ofd[1], ctbuf, ctlen);
 		//printf("Wrote %lu bytes\n", bytes_written);
         unsigned char result = 0;
         ssize_t bytes_read = read(ifd[0], &result, 1);
+		//get the finishing time
+		auto endTime = std::chrono::high_resolution_clock::now() - startTime;
+		long long microseconds = std::chrono::duration_cast<std::chrono::microseconds>(endTime).count();
+		if (microseconds > 31337)
+		{
+			return 'M';
+		}	
 		//printf("Oracle responded: %c\n", result);
         waitpid(pid, &status, 0);
         return result;
