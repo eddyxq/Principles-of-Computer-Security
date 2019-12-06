@@ -13,7 +13,7 @@
 #include <pthread.h> 
 #include <stdio.h>
 #include <stdlib.h>
-#include <vector>
+#include <string.h>
 
 unsigned char query_oracle(unsigned char ctbuf[], size_t ctlen, int ifd[2], int ofd[2])
 {
@@ -53,9 +53,9 @@ unsigned char query_oracle(unsigned char ctbuf[], size_t ctlen, int ifd[2], int 
 unsigned char getLastByte(unsigned char ctbuf[], size_t ctlen, int ifd[2], int ofd[2])
 {
 	//check if padding byte is already 0x01
-	ctbuf[ctlen-2] ^= 0x01;
+	ctbuf[ctlen-2-16] ^= 0x01;
 	unsigned char response = query_oracle(ctbuf, ctlen, ifd, ofd);
-	ctbuf[ctlen-2] ^= 0x01;
+	ctbuf[ctlen-2-16] ^= 0x01;
 	if (response == 'M')
 	{
 		return 0x01;
@@ -67,14 +67,14 @@ unsigned char getLastByte(unsigned char ctbuf[], size_t ctlen, int ifd[2], int o
 	for(int i = 1; i <= 16; i++)
 	{	
 		//xor with 1 to 16 until we get bad mac
-		ctbuf[ctlen-1] ^= i; 
+		ctbuf[ctlen-1-16] ^= i; 
 		//if it returns a MAC error then we know last byte in plaintext was flipped to 1
 		if(query_oracle(ctbuf, ctlen, ifd, ofd) == 'M')
 		{
 			padding = i;
 		}
 		//xor again to restore to original value for next loop iteration
-		ctbuf[ctlen-1] ^= i;
+		ctbuf[ctlen-1-16] ^= i;
 	}
 	return padding ^ 1;
 }
@@ -85,15 +85,15 @@ unsigned char nextLastByte(unsigned char ctbuf[], size_t ctlen, int ifd[2], int 
 	//increment the current padding bytes
 	for (int i = 0; i < padding; i++)
 	{
-		ctbuf[ctlen-1-i] = ctbuf[ctlen-1-i] ^ padding  ^ padding + 1;
+		ctbuf[ctlen-1-i-16] ^= padding ^ (padding + 1);
 	}
 	
 	//xor the last byte after padding with the padding
-	ctbuf[ctlen-1-padding] ^= padding + 1;
+	ctbuf[ctlen-1-padding-16] ^= padding + 1;
 	//brute-force until that last byte after padding is equal to padding
 	for (int i = 0; i < 255; i++)
 	{
-		ctbuf[ctlen-1-padding] ^= arr[i];
+		ctbuf[ctlen-1-padding-16] ^= arr[i];
 		
 		if (query_oracle(ctbuf, ctlen, ifd, ofd) == 'M')
 		{
@@ -108,7 +108,7 @@ unsigned char nextLastByte(unsigned char ctbuf[], size_t ctlen, int ifd[2], int 
 		}
 		
 		//xor again to restore to original value for next loop iteration
-		ctbuf[ctlen-1-padding] ^= arr[i];
+		ctbuf[ctlen-1-padding-16] ^= arr[i];
 	}
 }
 
@@ -117,16 +117,17 @@ void solveNextBlock(unsigned char ctbuf[], size_t ctlen, int ifd[2], int ofd[2],
 {
 	int blockNumber = numBlocks - (i / 16);
 	
-	int start = (16 * blockNumber) - 1;
+	int start = 16 * blockNumber;
 	
 	for(int j = 0; j < 16; j++)
 	{
-		unsigned char next = nextLastByte(ctbuf, ctlen - i, ifd, ofd, j, arr);
+		unsigned char next = nextLastByte(ctbuf, ctlen, ifd, ofd, j, arr);
 		ptbuf[start--] = next;
 		printf("%c\n", next);
 	}	
 }
 
+//decrypts the last block of the plaintext
 void solveLastBlock(unsigned char ctbuf[], size_t ctlen, int ifd[2], int ofd[2], int arr[], unsigned char ptbuf[], int BLOCK_SIZE, unsigned char padding, int index)
 {
 		//get the bytes in the block before the padding
@@ -175,6 +176,10 @@ int main(int argc, char * argv[])
 	
 	int numBlocks = (bytes_read - MACLEN - IVLEN) / BLOCK_SIZE;
 	
+	//create a copy original array so we can later restore changes
+	unsigned char ctbufOriginal[IVLEN + MACLEN + CTLEN];
+	memcpy(ctbufOriginal, ctbuf, IVLEN + MACLEN + CTLEN);
+	
 	bool done = false;
 	while (!done)
 	{
@@ -182,18 +187,22 @@ int main(int argc, char * argv[])
 		unsigned char padding = getLastByte(ctbuf, ctlen, ifd, ofd);
 		//converts char to int for calculations
 		int padBytes = padding;
+		printf("%d\n", padding);
 		
 		//now we know the padding number of bytes is all padding
 		//remove it because it is not required to be written
 		index -= padBytes;
-		
+
 		//decrypt the last block with the padding
 		solveLastBlock(ctbuf, ctlen, ifd, ofd, arr, ptbuf, BLOCK_SIZE, padding, index);
 	
 		//continue to decrypt remaining blocks in reverse order
 		for(int i = BLOCK_SIZE; i < ptlen; i += BLOCK_SIZE)
 		{
-			solveNextBlock(ctbuf, ctlen, ifd, ofd, arr, i, numBlocks, ptbuf);
+			//restore original ctbuf
+			memcpy(ctbuf, ctbufOriginal, IVLEN + MACLEN + CTLEN);
+			
+			solveNextBlock(ctbuf, ctlen - i, ifd, ofd, arr, i, numBlocks, ptbuf);
 		}
 		
 		//write plaintext to file
